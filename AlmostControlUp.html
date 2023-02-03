@@ -1,0 +1,79 @@
+<!--
+title: Almost Contol Up
+description: 
+published: 1
+date: 2023-02-03T17:41:50.303Z
+tags: 
+editor: ckeditor
+dateCreated: 2023-02-03T17:41:50.303Z
+-->
+
+<p>Almost Control Up give you the ability to make administritive changes to all VDI sessions this is done by dem granting elevated access to the following command -&nbsp;</p>
+<p><code>\\care.local\NETLOGON\Scripts\VDI\AlmostControlUp\AlmostControlup.exe</code><br><br>AlmostControlup.exe - This runs the following command</p>
+<p><code>start /min powershell -ExecutionPolicy Bypass -File "\\care.local\netlogon\scripts\vdi\AlmostControlup\AlmostControlup.ps1"</code></p>
+<p>Almostcontrolup.ps1 - As a baseline to work there is some commands in the script that must not be removed - <strong><u>Runs Every 5 min</u></strong><br><br>These commands proform the following steps</p>
+<p>It sets the values of two file paths as variables:</p>
+<ul>
+  <li>$Destination: the path where the files will be copied to</li>
+  <li>$Source: the path of the AlmostControlUp.exe file</li>
+  <li>$Source1: the path of the AlmostControlupservice.ps1 file</li>
+</ul>
+<p>It checks if the folder at $Destination exists, and creates it if it doesn't.</p>
+<p>It checks if the AlmostControlUp.exe file exists in the $Destination folder and copies it there if it doesn't.</p>
+<p>It copies the AlmostControlupservice.ps1 file to the $Destination folder.</p>
+<p>It checks if a scheduled task named "AlmostControlup Task" exists and creates it if it doesn't, using the information in the \care.local\netlogon\scripts\vdi\almostcontrolup\almostcontroluptask.xml file.</p>
+<p>It checks if a scheduled task named "AlmostControlup System" exists and creates it if it doesn't, using the options specified in the command (to run the PowerShell script in the $Destination folder every 10 minutes with the SYSTEM account, using the remotesigned execution policy).</p>
+<p>#If ever needed this is the code -</p>
+<pre><code class="language-plaintext">$Destination = "C:\EUC\VDI\AlmostControlup"
+$Source = "\\care.local\netlogon\scripts\VDI\AlmostControlup\AlmostControlUp.exe"
+$Source1 = "\\care.local\netlogon\scripts\VDI\AlmostControlup\AlmostControlupservice.ps1"
+
+if (!(Test-Path -Path $Destination)) {
+    New-Item -ItemType Directory -Path $Destination
+}
+
+if (!(Test-Path -Path "$Destination\AlmostControlUp.exe")) {
+    Copy-Item $Source -Destination "$Destination\AlmostControlUp.exe" -Force
+}
+
+Copy-Item $Source1 -Destination "$Destination\AlmostControlupservice.ps1" -Force
+
+if (!(schtasks /query /tn "AlmostControlup Task" | Select-String "TaskName: AlmostControlup Task")) {
+  schtasks /create /TN "AlmostControlup Task" /XML \\care.local\netlogon\scripts\vdi\almostcontrolup\almostcontroluptask.xml
+}
+
+if (!(schtasks /query /tn "AlmostControlup System" | Select-String "TaskName: AlmostControlup System")) {
+  schtasks /create /sc MINUTE /mo 10 /tn "AlmostControlup System" /tr "powershell -executionpolicy remotesigned -file c:\euc\vdi\almostcontrolup\AlmostControlupservice.ps1" /ru SYSTEM /f
+}</code></pre>
+<p>Any command you add after this point will be run as the user but with elevated privlage (local admin) When this command runs the only visibility for the user will be a minimised powershell window on the taskbar</p>
+<p>If you run anything that will prompt or require user interaction this will be the best option.</p>
+<p>&nbsp;</p>
+<p>If you need to do something that will need no user interaction, the following script is run as part of the user elevated script</p>
+<pre><code class="language-plaintext">schtasks /create /sc MINUTE /mo 10 /tn "AlmostControlup System" /tr "powershell -executionpolicy remotesigned -file c:\euc\vdi\almostcontrolup\AlmostControlupservice.ps1" /ru SYSTEM /f</code></pre>
+<p>This will then create a task that will run the content of the following powershell script as the built in system account <strong><u>every 10 minutes</u></strong> -</p>
+<p><code>\\care.local\NETLOGON\Scripts\VDI\AlmostControlUp\AlmostControlupservice.ps1</code></p>
+<p>The system account is not able to reach that network location so as part of the elevated user script this powershell script is being copied localy to the vdi every 5 minutes and run from that location.</p>
+<p><code>c:\EUC\VDI\AlmostControlup\AlmostControlupservice.ps1</code></p>
+<p>Using this method could allow you to silently install applications for the users but keep in mind you will need to add detection criteria to your scripts to check that the app is not installed or entrys are not there otherwise this will contiuously run and slow the script down also.</p>
+<p>Example below -</p>
+<pre><code class="language-plaintext">$registryPath = "HKLM:\SOFTWARE\WOW6432Node\HSCIC\Identity Agent"
+$expectedValue = "CN=NHS Level 1A, OU=CA, O=nhs;CN=NHS Level 1B, OU=CA, O=nhs;CN=NHS Level 1C, OU=CA, O=nhs;CN=NHS Level 1D, OU=CA, O=nhs;CN=NHS DEV Level 1C, OU=CA, O=nhs;CN=NHS DEV Level 1D, OU=CA, O=nhs;CN=NHS DEP Level 1C, OU=CA, O=nhs;CN=NHS DEP Level 1D, OU=CA, O=nhs;CN=NHS Authentication G2, OU=CA, O=nhs, C=GB;CN=NHS Signing G2, OU=CA, O=nhs, C=GB"
+
+$currentValue = (Get-ItemProperty -Path $registryPath -Name "TrustedCertificateIssuers").TrustedCertificateIssuers
+
+if ($currentValue -ne $expectedValue) {
+  Set-ItemProperty -Path $registryPath -Name "TrustedCertificateIssuers" -Value $expectedValue
+
+  $process = Get-Process -Name "IdentityAgent"
+  if ($process) {
+    Stop-Process -Id $process.Id
+
+    Start-Process -FilePath "C:\Program Files (x86)\HSCIC\Identity Agent\IdentityAgent.exe"
+  }
+}</code></pre>
+<p>The Above script is being used to check a specific registy key to see if contains all the entrys we want it too. If the key matches it will skep the rest of this command, If the key does not match it will set the value correctly, end the process called IdentityAgent and relaunch it.</p>
+<p>Without this check in place it would casue the command to keep ending identity agent task for users every 5 minutes causing major disruption.</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+<p>&nbsp;</p>
